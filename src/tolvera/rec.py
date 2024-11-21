@@ -141,3 +141,74 @@ class VideoRecorder:
     def __call__(self, *args, **kwds):
         """Record the current frame and increment the frame counter."""
         self.step()
+
+@ti.data_oriented
+class FrameRecorder:
+    """Frame Recorder for saving individual PNG frames
+    
+    Example:
+        from tolvera import Tolvera, run, FrameRecorder
+        def main(**kwargs):
+            tv = Tolvera(**kwargs)
+            recorder = FrameRecorder(tv, **kwargs)
+            
+            @tv.render
+            def _():
+                if some_condition:  # e.g. key press
+                    recorder.capture_frame()
+                tv.px.diffuse(0.99)
+                tv.v.flock(tv.p)
+                tv.px.particles(tv.p, tv.s.species())
+                return tv.px
+    """
+    def __init__(self, tolvera, **kwargs) -> None:
+        """Initialize a frame recorder for a Tölvera program.
+
+        Args:
+            tolvera (Tolvera): Tölvera instance to record from.
+            w (int): Width of output image. Defaults to tv.x.
+            h (int): Height of output image. Defaults to tv.y.
+            output_dir (str): Output directory. Defaults to './output'.
+            filename_prefix (str): Prefix for output filenames. Defaults to 'frame'.
+        """
+        self.tv = tolvera
+        self.w = kwargs.get('w', self.tv.x)
+        self.h = kwargs.get('h', self.tv.y)
+        self.output_dir = kwargs.get('output_dir', './output')
+        self.filename_prefix = kwargs.get('filename_prefix', 'frame')
+        self.frame_count = 0
+        
+        # Create output directory if it doesn't exist
+        os.makedirs(self.output_dir, exist_ok=True)
+        
+        # Initialize pixel field for the frame
+        self.px = Pixel.field(shape=(self.tv.x, self.tv.y))
+
+    @ti.kernel
+    def _copy_frame(self):
+        """Copy the current frame from Tolvera to the pixel field."""
+        for x, y in ti.ndrange(self.tv.x, self.tv.y):
+            self.px.rgba[x, y] = self.tv.px.px.rgba[x, y]
+
+    def capture_frame(self, custom_name: str = None):
+        """Capture and save the current frame as a PNG.
+
+        Args:
+            custom_name (str, optional): Custom filename (without extension).
+                                       If None, uses prefix_timestamp format.
+        """
+        self._copy_frame()
+        
+        if custom_name is None:
+            timestamp = datetime.now().strftime(DT_FMT)
+            filename = f"{self.filename_prefix}_{timestamp}_{self.frame_count:04d}.png"
+        else:
+            filename = f"{custom_name}.png"
+            
+        filepath = os.path.join(self.output_dir, filename)
+        
+        # Save the frame using Taichi's built-in image writing
+        ti.tools.imwrite(self.px.rgba, filepath)
+        print(f"[FrameRecorder] Saved frame to {filepath}")
+        
+        self.frame_count += 1
